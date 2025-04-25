@@ -39,9 +39,11 @@ from find_posts import (
     parse_pixelfed_profile_url,
     parse_pixelfed_url,
     parse_pleroma_url,
+    parse_pleroma_uri,
     post,
     set_server_apis,
     user_has_opted_out,
+    parse_url
 )
 
 
@@ -874,6 +876,10 @@ def test_parse_pleroma_url(mock_get_redirect_url):
     result = parse_pleroma_url("https://different.example.com/objects/111")
     assert result == ("different.example.com", "789")
 
+def test_parse_pleroma_uri():
+    # Test that a valid URI is correctly parsed
+    uri = "https://friedcheese.us/notice/Arv4zBVnAR84mmkVay"
+    assert parse_pleroma_uri(uri) == ("friedcheese.us", "Arv4zBVnAR84mmkVay")    
 
 import re
 import pytest
@@ -950,6 +956,25 @@ def test_parse_peertube_url_valid():
 
     # assert that the result is as expected
     assert result == expected
+
+def test_parse_url():
+    tests = [
+        (
+            "https://video.infosec.exchange/videos/watch/56f1d0b5-d98f-4bad-b1e7-648ae074ab9d",
+            ("video.infosec.exchange", "56f1d0b5-d98f-4bad-b1e7-648ae074ab9d")
+        ),
+        (
+            "https://veedeo.org/videos/watch/a51bb77c-e1bd-4d6a-b119-95af176f6d66",
+            ("veedeo.org", "a51bb77c-e1bd-4d6a-b119-95af176f6d66")
+        ),
+        (
+            'https://foo.bar/nothing',
+            None
+        )
+    ]
+    for (url,expected) in tests:
+        result = parse_url(url, {})
+        assert result == expected
 
 
 def test_parse_peertube_url_invalid():
