@@ -1,5 +1,10 @@
 # FediFetcher for Mastodon
 
+> [!IMPORTANT]  
+> Running FediFetcher as GitHub Action is deprecated since May 2025. If you are running FediFetcher as GitHub Action it will cease running by 20th June.
+>
+> If you are currently running FediFetcher as GitHub Action please see [Migrating From GitHub Actions](https://github.com/nanos/FediFetcher/wiki/Migrating-From-GitHub-Actions) for migration details.
+
 This GitHub repository provides a simple script that can pull missing posts into Mastodon using the Mastodon API. FediFetcher has no further dependencies, and can be run as either a GitHub Action, a scheduled cron job, or a pre-packaged container. Here is what FediFetcher can do:
 
 1. It can pull missing remote replies to posts that are already on your server into your server. Specifically, it can
@@ -36,7 +41,7 @@ FediFetcher will pull in posts and profiles from any servers running the followi
 
 ## Setup
 
-There are many way to configure and run FediFetcher, including as GitHub Action, cron job, container, or even from a Windows computer using the Task Schedule. None of these require CLI/SSH access to your Mastodon server.
+There are many way to configure and run FediFetcher, including as cron job, container, or even from a Windows computer using the Task Schedule. None of these require CLI/SSH access to your Mastodon server.
 
 For full details please [see the Documentation](https://github.com/nanos/FediFetcher/wiki).
 
