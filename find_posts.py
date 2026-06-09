@@ -20,7 +20,7 @@ import xxhash
 logger = logging.getLogger("FediFetcher")
 robotParser = urllib.robotparser.RobotFileParser()
 
-VERSION = "7.1.17"
+VERSION = "7.1.18"
 
 argparser=argparse.ArgumentParser()
 
@@ -1120,7 +1120,7 @@ def can_fetch(user_agent, url):
 def user_agent():
     return f"FediFetcher/{VERSION}; +{arguments.server} (https://go.thms.uk/ff)"
 
-def get(url, headers = {}, timeout = 0, max_tries = 5, ignore_robots_txt = False):
+def get(url, headers = {}, timeout = 0, max_tries = 5, backoff = 0.5, ignore_robots_txt = False):
     """A simple wrapper to make a get request while providing our user agent, and respecting rate limits"""
     h = headers.copy()
     if 'User-Agent' not in h:
@@ -1135,17 +1135,21 @@ def get(url, headers = {}, timeout = 0, max_tries = 5, ignore_robots_txt = False
     response = requests.get( url, headers= h, timeout=timeout)
     if response.status_code == 429:
         if max_tries > 0:
-            reset = parser.parse(response.headers['x-ratelimit-reset'])
             now = datetime.now(datetime.now().astimezone().tzinfo)
-            wait = (reset - now).total_seconds() + 1
-            logger.warning(f"Rate Limit hit requesting {url}. Waiting {wait} sec to retry at {response.headers['x-ratelimit-reset']}")
+            if 'x-ratelimit-reset' in response.headers:
+                reset = parser.parse(response.headers['x-ratelimit-reset'])
+                wait = (reset - now).total_seconds() + 1
+            else:
+                wait = backoff
+                reset = now + timedelta(seconds=wait)
+            logger.warning(f"Rate Limit hit requesting {url}. Waiting {wait} sec to retry at {reset}")
             time.sleep(wait)
-            return get(url, headers, timeout, max_tries - 1)
+            return get(url, headers, timeout, max_tries - 1, backoff * 4)
 
         raise Exception(f"Maximum number of retries exceeded for rate limited request {url}")
     return response
 
-def post(url, json, headers = {}, timeout = 0, max_tries = 5):
+def post(url, json, headers = {}, timeout = 0, max_tries = 5, backoff = 0.5):
     """A simple wrapper to make a post request while providing our user agent, and respecting rate limits"""
     h = headers.copy()
     if 'User-Agent' not in h:
@@ -1160,12 +1164,16 @@ def post(url, json, headers = {}, timeout = 0, max_tries = 5):
     response = requests.post( url, json=json, headers= h, timeout=timeout)
     if response.status_code == 429:
         if max_tries > 0:
-            reset = parser.parse(response.headers['x-ratelimit-reset'])
             now = datetime.now(datetime.now().astimezone().tzinfo)
-            wait = (reset - now).total_seconds() + 1
-            logger.warning(f"Rate Limit hit requesting {url}. Waiting {wait} sec to retry at {response.headers['x-ratelimit-reset']}")
+            if 'x-ratelimit-reset' in response.headers:
+                reset = parser.parse(response.headers['x-ratelimit-reset'])
+                wait = (reset - now).total_seconds() + 1
+            else:
+                wait = backoff
+                reset = now + timedelta(seconds=wait)
+            logger.warning(f"Rate Limit hit requesting {url}. Waiting {wait} sec to retry at {reset}")
             time.sleep(wait)
-            return post(url, json, headers, timeout, max_tries - 1)
+            return post(url, json, headers, timeout, max_tries - 1, backoff * 4)
 
         raise Exception(f"Maximum number of retries exceeded for rate limited request {url}")
     return response
@@ -1730,13 +1738,13 @@ if __name__ == "__main__":
                 add_context_urls(arguments.server, token, known_context_urls, seen_urls)
 
         with open(KNOWN_FOLLOWINGS_FILE, "w", encoding="utf-8") as f:
-            f.write("\n".join(list(known_followings)[-10000:]))
+            f.write("\n".join(list(known_followings)[-100000:]))
 
         with open(SEEN_URLS_FILE, "w", encoding="utf-8") as f:
-            f.write("\n".join(list(seen_urls)[-10000:]))
+            f.write("\n".join(list(seen_urls)[-100000:]))
 
         with open(REPLIED_TOOT_SERVER_IDS_FILE, "w", encoding="utf-8") as f:
-            json.dump(dict(list(replied_toot_server_ids.items())[-10000:]), f)
+            json.dump(dict(list(replied_toot_server_ids.items())[-100000:]), f)
 
         with open(RECENTLY_CHECKED_USERS_FILE, "w", encoding="utf-8") as f:
             f.write(recently_checked_users.toJSON())
