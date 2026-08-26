@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Without this file Dependabot only raises security advisories, so anything
+  # without a CVE quietly goes stale. certifi in particular is the CA bundle we
+  # verify every remote instance against, and wants keeping current.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python-packages:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fedifetcher"
+description = "Pull missing posts and profiles into your Mastodon instance"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
+authors = [{ name = "Michael Thomas", email = "nanos@thms.uk" }]
+requires-python = ">=3.11"
+dynamic = ["version"]
+# Direct dependencies only, with the lowest version we are known to work with.
+# requirements.txt pins these and their transitive dependencies for deployment;
+# tests/test_packaging.py checks the two agree.
+dependencies = [
+    "defusedxml>=0.7",
+    "python-dateutil>=2.8",
+    "requests>=2.31",
+    "xxhash>=3.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/nanos/FediFetcher"
+Documentation = "https://github.com/nanos/FediFetcher/wiki"
+Issues = "https://github.com/nanos/FediFetcher/issues"
+
+[project.scripts]
+fedifetcher = "fedifetcher.run:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "fedifetcher.VERSION" }
+
+# Without this, setuptools refuses to guess: find_posts.py and get_context.py
+# sit alongside the package at the top level.
+[tool.setuptools.packages.find]
+include = ["fedifetcher*"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "I", "RET503"]
+ignore = [
+    # The argparse help strings are long by nature.
+    "E501",
+    # Broad `pytest.raises(Exception)` in the test suite. Revisit once the
+    # exception hierarchy exists.
+    "B017",
+]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["find_posts.py", "get_context.py", "fedifetcher", "tests"]
+ignore_missing_imports = true
+strict = true
+
+# The test suite is not annotated yet. Drop these as each module is typed.
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["fedifetcher"]
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "if __name__ == .__main__.:"]
+fail_under = 94

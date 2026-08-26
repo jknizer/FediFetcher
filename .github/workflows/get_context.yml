@@ -12,17 +12,17 @@ jobs:
     environment: mastodon
     steps:
       - name: Checkout original repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-         python-version: '3.10'
+         python-version: '3.11'
          cache: 'pip' # caching pip dependencies
       - run: pip install -r requirements.txt
       - name: Download all workflow run artifacts
-        uses: dawidd6/action-download-artifact@v6
+        uses: dawidd6/action-download-artifact@v21
         with:
           name: artifacts
           workflow: get_context.yml
@@ -32,13 +32,13 @@ jobs:
         run: ls -lR
       - run: python find_posts.py --lock-hours=0 --access-token=${{ secrets.ACCESS_TOKEN }} -c="./config.json"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: artifacts
           path: |
             artifacts
       # Temporarily disable these while we figure out what to do.
       # - name: Checkout user's forked repository for keeping workflow alive
-      #   uses: actions/checkout@v4
+      #   uses: actions/checkout@v7
       # - name: Keep workflow alive
       #   uses: gautamkrishnar/keepalive-workflow@v1

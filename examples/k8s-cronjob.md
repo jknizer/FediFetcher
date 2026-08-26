@@ -46,7 +46,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: fedifetcher
-              image: ghcr.io/nanos/fedifetcher:latest
+              image: ghcr.io/nanos/fedifetcher:stable
               imagePullPolicy: IfNotPresent
               env:
                 - name: FF_HOME_TIMELINE_LENGTH
@@ -81,4 +81,10 @@ spec:
               persistentVolumeClaim:
                 claimName: fedifetcher-pvc
 ```
+
+`stable` is the latest stable release. Other tags, including pinning to a major or minor version, are described in [Running FediFetcher from a container](https://github.com/nanos/FediFetcher/wiki/Running-FediFetcher-from-a-container#choosing-a-tag).
+
+> [!NOTE]
+>
+> `imagePullPolicy: IfNotPresent` will not pick up a new image when a floating tag such as `stable` moves. Use `Always`, or pin to a version tag, if you want updates.
 
