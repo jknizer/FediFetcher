@@ -31,7 +31,7 @@ class Notifier:
 
     def __init__(self, config: Config, http: HttpClient, run_id: uuid.UUID) -> None:
         self._config = config
-        self._http = http
+        self._http = http.ignoring_robots()
         self._run_id = run_id
         self._started = datetime.now()
 
@@ -45,7 +45,6 @@ class Notifier:
         try:
             self._http.get(
                 build_callback_url(url, {"rid": self._run_id, **params}),
-                ignore_robots_txt=True,
             )
         except Exception as ex:
             logger.error(f"Error getting callback url: {ex}")
