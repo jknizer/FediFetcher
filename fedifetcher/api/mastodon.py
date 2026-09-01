@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, cast
 
@@ -124,21 +124,10 @@ class MastodonApi:
         self.webserver = webserver
         self._http = http
 
-    def user_id(self, user: str | None = None, access_token: str | None = None) -> str:
+    def user_id(self, user: str) -> str:
         """Look up the numeric id the API addresses an account by"""
-        headers = {}
-
-        if user is not None and user != '':
-            url = f"https://{self.webserver}/api/v1/accounts/lookup?acct={user}"
-        elif access_token is not None:
-            url = f"https://{self.webserver}/api/v1/accounts/verify_credentials"
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-            }
-        else:
-            raise Exception('You must supply either a user name or an access token, to get an user ID')
-
-        response = self._http.get(url, headers=headers)
+        url = f"https://{self.webserver}/api/v1/accounts/lookup?acct={user}"
+        response = self._http.get(url)
 
         if response.status_code == 200:
             return cast("str", response.json()['id'])
@@ -222,8 +211,16 @@ class MastodonApi:
         return []
 
 
+def masked(token: str) -> str:
+    """Enough of a token to tell which one it was, and no more"""
+    if len(token) <= 10:
+        return "*" * len(token)
+    return f"{token[:5]}{'*' * (len(token) - 10)}{token[-5:]}"
+
+
 def report_mastodon_error(
-    error_message: str, error_code: int, access_token: str, required_scope: str = ''
+    error_message: str, error_code: int, required_scope: str = '',
+    token_hint: str | None = None,
 ) -> NoReturn:
     subline = ""
     match error_code:
@@ -235,17 +232,18 @@ def report_mastodon_error(
             else:
                 subline = "\nMake sure you have enabled the required scope(s) for your token."
 
+    # which token failed matters: several may be configured for the one server
+    with_token = f" with token {token_hint}" if token_hint else ""
     raise Exception(
-        f"{error_message} with token {access_token[:+5]}{'*' * (len(access_token) - 10)}{access_token[-5:]}. Status code: {error_code} "
+        f"{error_message}{with_token}. Status code: {error_code} "
         f"{subline}"
     )
 
 
 def get_paginated(
     url: str, stop_at: int | datetime | None,
-    headers: Mapping[str, str] | None = None,
     timeout: int | None = None, max_tries: int = 5, *, http: HttpClient,
-    required_scope: str = '',
+    required_scope: str = '', token_hint: str | None = None,
 ) -> list[Any]:
     """Follow a Mastodon collection across pages.
 
@@ -258,7 +256,6 @@ def get_paginated(
     `stop_at` is either how many entries are wanted, or the oldest creation
     date worth having, or nothing at all to read unpaginated endpoints.
     """
-    headers = headers or {}
     # what is wanted overall is not what a page will hold, and asking for more
     # than a server will give is not always forgiven: Mastodon quietly trims an
     # oversized limit, but Sharkey turns the request away with a 400
@@ -268,13 +265,13 @@ def get_paginated(
 
     result: list[Any] = []
     while True:
-        response = http.get(next_url, headers, timeout, max_tries)
+        response = http.get(next_url, timeout, max_tries)
         if response.status_code != 200:
             report_mastodon_error(
                 f"Error getting URL {next_url}",
                 response.status_code,
-                headers.get('Authorization', '').replace("Bearer ", ""),
                 required_scope,
+                token_hint,
             )
 
         page = response.json()
@@ -300,24 +297,30 @@ class HomeServer:
 
     def __init__(self, server: str, token: str, http: HttpClient) -> None:
         self.server = server
-        self._token = token
-        self._http = http
-        self._api = MastodonApi(server, http)
-
-    @property
-    def _auth(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._token}"}
+        self._http = http.authenticated(token)
+        self._token_hint = masked(token)
+        self._api = MastodonApi(server, self._http)
 
     def _paginated(
         self, path: str, stop_at: int | datetime | None, required_scope: str = ''
     ) -> list[Any]:
         return get_paginated(
-            f"https://{self.server}{path}", stop_at, self._auth, http=self._http,
-            required_scope=required_scope,
+            f"https://{self.server}{path}", stop_at, http=self._http,
+            required_scope=required_scope, token_hint=self._token_hint,
         )
 
     def user_id(self, user: str | None = None) -> str:
-        return self._api.user_id(user, self._token)
+        if user:
+            return self._api.user_id(user)
+
+        url = f"https://{self.server}/api/v1/accounts/verify_credentials"
+        resp = self._http.get(url)
+        if resp.status_code != 200:
+            report_mastodon_error(
+                f"Error verifying credentials on server {self.server}",
+                resp.status_code, "read:accounts", self._token_hint,
+            )
+        return cast("str", resp.json()["id"])
 
     def _posts(
         self, path: str, stop_at: int | datetime, required_scope: str = ''
@@ -374,11 +377,11 @@ class HomeServer:
         """user IDs on our server that have posted in the given time interval"""
         since = datetime.now() - timedelta(days=reply_interval_hours / 24 + 1)
         url = f"https://{self.server}/api/v1/admin/accounts"
-        resp = self._http.get(url, headers=self._auth)
+        resp = self._http.get(url)
         if resp.status_code != 200:
             report_mastodon_error(
                 f"Error getting user IDs on server {self.server}",
-                resp.status_code, self._token, "admin:read:accounts",
+                resp.status_code, "admin:read:accounts", self._token_hint,
             )
 
         for user in resp.json():
@@ -391,12 +394,12 @@ class HomeServer:
     def account_statuses(self, user_id: str) -> list[Post]:
         """Recent posts by one of our users, replies included"""
         url = f"https://{self.server}/api/v1/accounts/{user_id}/statuses?exclude_replies=false&limit=40"
-        resp = self._http.get(url, headers=self._auth)
+        resp = self._http.get(url)
 
         if resp.status_code != 200:
             report_mastodon_error(
                 f"Error getting replies for user {user_id} on server {self.server}",
-                resp.status_code, self._token, "read:statuses",
+                resp.status_code, "read:statuses", self._token_hint,
             )
         return usable(to_post(raw) for raw in resp.json())
 
@@ -405,7 +408,7 @@ class HomeServer:
         search_url = f"https://{self.server}/api/v2/search?q={url}&resolve=true&limit=1"
 
         try:
-            resp = self._http.get(search_url, headers=self._auth)
+            resp = self._http.get(search_url)
         except Exception as ex:
             logger.error(
                 f"Error adding url {search_url} to server {self.server}. Exception: {ex}"

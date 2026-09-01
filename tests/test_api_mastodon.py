@@ -37,22 +37,6 @@ def test_user_id_is_looked_up_by_name(api, http, reply):
     )
 
 
-def test_user_id_falls_back_to_the_token_owner(api, http, reply):
-    http.get.return_value = reply(200, {"id": "1234"})
-
-    assert api.user_id(access_token="token") == "1234"
-
-    assert http.get.call_args[0][0] == (
-        "https://example.social/api/v1/accounts/verify_credentials"
-    )
-    assert http.get.call_args.kwargs["headers"]["Authorization"] == "Bearer token"
-
-
-def test_user_id_needs_something_to_go_on(api):
-    with pytest.raises(Exception, match="user name or an access token"):
-        api.user_id()
-
-
 def test_user_id_reports_an_unknown_user(api, http, reply):
     http.get.return_value = reply(404)
     with pytest.raises(Exception, match="was not found"):

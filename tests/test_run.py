@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from fedifetcher.config import Config
+from fedifetcher.http import HttpClient
 from fedifetcher.run import Notifier, main
 from fedifetcher.store import LockedError
 
@@ -50,14 +51,12 @@ def test_each_token_gets_its_own_run(tmp_path):
         "--server=example.social", "--access-token=one", "--access-token=two",
         f"--state-dir={tmp_path}", "--max-bookmarks=5",
     ]
-    with patch("fedifetcher.run.HttpClient"), patch(
-        "fedifetcher.run.run_enabled_tasks"
-    ) as run_tasks:
+    with patch("fedifetcher.run.run_enabled_tasks") as run_tasks:
         main(argv)
 
     assert run_tasks.call_count == 2
-    tokens = [call.args[0].home._token for call in run_tasks.call_args_list]
-    assert tokens == ["one", "two"]
+    tokens = [call.args[0].home._http._headers['Authorization'] for call in run_tasks.call_args_list]
+    assert tokens == ["Bearer one", "Bearer two"]
 
 
 def test_a_failing_task_still_saves_what_it_managed(tmp_path):
@@ -77,13 +76,25 @@ def test_a_failing_task_still_saves_what_it_managed(tmp_path):
 
 
 @pytest.fixture
-def notifier(tmp_path):
-    http = Mock()
+def notifier(tmp_path, http):
     config = make_config(
         tmp_path, on_start="https://hc.example/start",
         on_done="https://hc.example/done", on_fail="https://hc.example/fail",
     )
     return Notifier(config, http, uuid.UUID(int=1)), http
+
+
+def test_the_callback_is_really_sent(tmp_path):
+    """Through a real client, because a mock would accept any call we made of it"""
+    session = Mock()
+    session.request.return_value = Mock(status_code=200)
+    config = make_config(tmp_path, on_start="https://hc.example/start")
+
+    Notifier(config, HttpClient(config, session=session), uuid.UUID(int=1)).starting()
+
+    # the one call is the callback itself: robots.txt was never asked about
+    session.request.assert_called_once()
+    assert session.request.call_args.args[1].startswith("https://hc.example/start?")
 
 
 def test_callbacks_carry_the_run_id(notifier):
@@ -100,8 +111,7 @@ def test_the_done_callback_reports_how_long_it_took(notifier):
     assert "msg=all+finished" in url
 
 
-def test_unset_callbacks_are_not_called(tmp_path):
-    http = Mock()
+def test_unset_callbacks_are_not_called(tmp_path, http):
     notify = Notifier(make_config(tmp_path), http, uuid.UUID(int=1))
     notify.starting()
     notify.done("finished")
