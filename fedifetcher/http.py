@@ -37,10 +37,11 @@ class RobotsCache:
     fetched at all and we go ahead regardless.
     """
 
-    def __init__(self, state_dir: Path, blocklist: tuple[str, ...]) -> None:
+    def __init__(self, state_dir: Path, blocklist: tuple[str, ...], fetcher: HttpClient) -> None:
         self._state_dir = state_dir
         self._blocklist = blocklist
         self._cache: dict[str, str | bool] = {}
+        self._fetcher = fetcher.ignoring_robots()
 
     def cache_path(self, robots_url: str) -> Path:
         digest = xxhash.xxh128(robots_url.encode('utf-8')).hexdigest()
@@ -59,7 +60,7 @@ class RobotsCache:
 
         return None
 
-    def fetch(self, robots_url: str, fetcher: HttpClient) -> str | bool:
+    def fetch(self, robots_url: str) -> str | bool:
         cached = self.cached(robots_url)
         if cached is not None:
             return cached
@@ -67,7 +68,7 @@ class RobotsCache:
         robots: str | bool
         try:
             # We are getting the robots.txt manually from here, because otherwise we can't change the User Agent
-            response = fetcher.get(robots_url, timeout=2, ignore_robots_txt=True)
+            response = self._fetcher.get(robots_url, timeout=2)
             if response.status_code in (401, 403):
                 robots = False
             else:
@@ -79,7 +80,7 @@ class RobotsCache:
         self._cache[robots_url] = robots
         return robots
 
-    def can_fetch(self, user_agent: str, url: str, fetcher: HttpClient) -> bool:
+    def can_fetch(self, user_agent: str, url: str) -> bool:
         parsed_uri = urlparse(url)
         robots_url = f'{parsed_uri.scheme}://{parsed_uri.netloc}/robots.txt'
 
@@ -89,7 +90,7 @@ class RobotsCache:
                 f"Connecting to {parsed_uri.netloc} is prohibited by the configured blocklist"
             )
 
-        robots = self.fetch(robots_url, fetcher)
+        robots = self.fetch(robots_url)
         if isinstance(robots, bool):
             return robots
 
@@ -121,16 +122,39 @@ class HttpClient:
         config: Config,
         session: requests.Session | None = None,
         robots: RobotsCache | None = None,
+        headers: Mapping[str, str] | None = None,
+        ignore_robots_txt: bool = False,
     ) -> None:
         self._config = config
         # a session keeps connections alive between the many requests we make
         # to the same handful of hosts
         self._session = session if session is not None else requests.Session()
-        self.robots = (
-            robots
-            if robots is not None
-            else RobotsCache(config.state_dir, config.instance_blocklist)
+        self._robots = robots
+        self._headers = headers
+        self._ignore_robots_txt = ignore_robots_txt
+
+    def ignoring_robots(self) -> HttpClient:
+        """A client that will ignore robots.txt"""
+        return self._derived(ignore_robots_txt=True)
+
+    def authenticated(self, token: str) -> HttpClient:
+        """A client for our own server: it sends our token, and robots.txt does not apply"""
+        return self._derived(headers={"Authorization": f"Bearer {token}"}, ignore_robots_txt=True)
+
+    def _derived(
+          self,
+          headers: Mapping[str, str] | None = None,
+          ignore_robots_txt: bool | None = None
+    ) -> HttpClient:
+        return HttpClient(
+            self._config, self._session, self._robots, headers or self._headers, ignore_robots_txt or self._ignore_robots_txt
         )
+
+    @property
+    def robots(self) -> RobotsCache:
+        if self._robots is None:
+            self._robots = RobotsCache(self._config.state_dir, self._config.instance_blocklist, self)
+        return self._robots
 
     @property
     def user_agent(self) -> str:
@@ -139,30 +163,27 @@ class HttpClient:
     def get(
         self,
         url: str,
-        headers: Mapping[str, str] | None = None,
         timeout: int | None = None,
         max_tries: int = 5,
         backoff: float = 0.5,
-        ignore_robots_txt: bool = False,
     ) -> requests.Response:
         """Make a get request while providing our user agent, and respecting rate limits"""
         return self._request(
-            "GET", url, headers=headers, timeout=timeout, max_tries=max_tries,
-            backoff=backoff, ignore_robots_txt=ignore_robots_txt,
+            "GET", url, timeout=timeout, max_tries=max_tries,
+            backoff=backoff,
         )
 
     def post(
         self,
         url: str,
         json: Any,
-        headers: Mapping[str, str] | None = None,
         timeout: int | None = None,
         max_tries: int = 5,
         backoff: float = 0.5,
     ) -> requests.Response:
         """Make a post request while providing our user agent, and respecting rate limits"""
         return self._request(
-            "POST", url, json=json, headers=headers, timeout=timeout,
+            "POST", url, json=json, timeout=timeout,
             max_tries=max_tries, backoff=backoff,
         )
 
@@ -191,17 +212,15 @@ class HttpClient:
         method: str,
         url: str,
         json: Any = None,
-        headers: Mapping[str, str] | None = None,
         timeout: int | None = None,
         max_tries: int = 5,
         backoff: float = 0.5,
-        ignore_robots_txt: bool = False,
         allow_redirects: bool = True,
     ) -> requests.Response:
-        h = dict(headers or {})
+        h = dict(self._headers or {})
         h.setdefault('User-Agent', self.user_agent)
 
-        if not ignore_robots_txt and not self.robots.can_fetch(h['User-Agent'], url, self):
+        if not self._ignore_robots_txt and not self.robots.can_fetch(h['User-Agent'], url):
             raise BlockedByRobotsError(f"Querying {url} prohibited by robots.txt")
 
         if timeout is None:

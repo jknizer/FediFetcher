@@ -31,8 +31,14 @@ def make_user(**overrides: Any) -> User:
 
 @pytest.fixture
 def http():
-    """A stand-in HttpClient whose get/post return whatever a test sets up"""
-    return Mock()
+    """A stand-in HttpClient whose get/post return whatever a test sets up.
+    Deriving a client gives back the same mock, so a test can set up `http.get`
+    without caring whether the code under test authenticated first.
+    """
+    client = Mock()
+    client.authenticated.return_value = client
+    client.ignoring_robots.return_value = client
+    return client
 
 
 def response(status_code=200, json_data=None, text=""):

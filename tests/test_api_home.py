@@ -1,8 +1,14 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 import pytest
 
-from fedifetcher.api.mastodon import HomeServer, get_paginated, report_mastodon_error
+from fedifetcher.api.mastodon import (
+    HomeServer,
+    get_paginated,
+    masked,
+    report_mastodon_error,
+)
 from tests.conftest import make_user
 
 
@@ -12,7 +18,6 @@ def home(http):
 
 
 def page(json_data, next_url=None):
-    from unittest.mock import Mock
     resp = Mock()
     resp.status_code = 200
     resp.json.return_value = json_data
@@ -36,8 +41,7 @@ def urls(posts):
 def test_requests_carry_the_token(home, http, reply):
     http.get.return_value = page([])
     home.bookmarks(5)
-    headers = http.get.call_args[0][1]
-    assert headers["Authorization"] == "Bearer secret-token-value"
+    http.authenticated.assert_called_once_with("secret-token-value")
 
 
 def test_a_limit_becomes_a_query_parameter(home, http):
@@ -103,17 +107,54 @@ def test_pagination_by_date_stops_at_the_cutoff(home, http):
     assert len(result) == 2
 
 
-def test_an_error_status_is_reported_with_the_token_masked(home, http, reply):
+def test_an_error_status_is_reported(home, http, reply):
+    http.get.return_value = reply(401)
+    with pytest.raises(Exception) as caught:
+        home.bookmarks(5)
+    assert "access token is incorrect" in str(caught.value)
+    assert "401" in str(caught.value)
+
+
+def test_an_error_names_which_token_it_was_without_giving_it_away(home, http, reply):
+    """Several tokens can be configured for the one server"""
     http.get.return_value = reply(401)
     with pytest.raises(Exception) as caught:
         home.bookmarks(5)
     assert "secret-token-value" not in str(caught.value)
-    assert "access token is incorrect" in str(caught.value)
+    assert "secre********value" in str(caught.value)
+
+
+def test_a_direct_request_names_its_token_too(home, http, reply):
+    """The paginated and unpaginated paths report separately"""
+    http.get.return_value = reply(403)
+    with pytest.raises(Exception) as caught:
+        home.account_statuses("7")
+    assert "secre********value" in str(caught.value)
 
 
 def test_a_missing_scope_is_named_when_known():
     with pytest.raises(Exception, match="read:statuses"):
-        report_mastodon_error("boom", 403, "0123456789abcde", "read:statuses")
+        report_mastodon_error("boom", 403, "read:statuses")
+
+
+def test_an_error_without_a_token_does_not_mention_one():
+    with pytest.raises(Exception) as caught:
+        report_mastodon_error("boom", 500)
+    assert "with token" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("0123456789abcde", "01234*****abcde"),
+        # a short token has no middle to hide behind, so none of it is shown
+        ("0123456789", "**********"),
+        ("short", "*****"),
+        ("", ""),
+    ],
+)
+def test_masking_never_shows_a_token_that_is_too_short_to_hide(token, expected):
+    assert masked(token) == expected
 
 
 def test_notifications_are_reduced_to_distinct_accounts(home, http):
@@ -204,3 +245,24 @@ def test_followers_and_following_are_addressed_by_user_id(home, http):
 
     home.following("7", 5)
     assert "/api/v1/accounts/7/following" in http.get.call_args[0][0]
+
+
+def test_user_id_falls_back_to_the_token_owner(home, http, reply):
+    http.get.return_value = reply(200, {"id": "1234"})
+
+    assert home.user_id() == "1234"
+
+    assert http.get.call_args[0][0] == (
+        "https://example.social/api/v1/accounts/verify_credentials"
+    )
+
+
+def test_an_unnamed_user_is_the_token_owner_too(home, http, reply):
+    """--user= left empty is how the config arrives when nobody was named"""
+    http.get.return_value = reply(200, {"id": "1234"})
+
+    assert home.user_id("") == "1234"
+
+    assert http.get.call_args[0][0] == (
+        "https://example.social/api/v1/accounts/verify_credentials"
+    )
